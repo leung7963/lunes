@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node login.js",
     "test": "echo \"No tests specified\" && exit 0",
-    "ci-test": "echo \"Running in CI environment\" && HEADLESS=true node betadash-login.js"
+    "ci-test": "echo \"Running in CI environment\" && HEADLESS=true node login.js"
   },
   "keywords": [
     "automation",
