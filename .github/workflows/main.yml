@@ -44,6 +44,7 @@ jobs:
         CAPTCHA_API_KEY: ${{ secrets.CAPTCHA_API_KEY }}
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        HEADLESS: ${{ secrets.HEADLESS }}
       continue-on-error: true
 
     - name: Upload failure screenshot as Artifact
