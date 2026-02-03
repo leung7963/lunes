@@ -22,7 +22,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        npm install puppeteer axios node-telegram-bot-api dotenv
+        npm install puppeteer@15 axios node-telegram-bot-api dotenv
 
     - name: Install Puppeteer dependencies
       run: |
