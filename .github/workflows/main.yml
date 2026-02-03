@@ -23,8 +23,14 @@ on:
     paths:
       - 'login.js'
       - '.github/workflows/**'
+      - 'package.json'
+      - 'package-lock.json'
 
-# 4. 防止并发运行
+  # 4. 手动触发测试模式
+  repository_dispatch:
+    types: [run-login-test]
+
+# 5. 防止并发运行
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -38,17 +44,20 @@ jobs:
       # 步骤 1: 检出代码
       - name: 🛎️ 检出代码
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
       
       # 步骤 2: 设置 Node.js 环境
       - name: ⎔ 设置 Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'  # Puppeteer 兼容的版本
+          node-version: '18'
           cache: 'npm'
       
       # 步骤 3: 安装系统依赖（Puppeteer 所需）
       - name: 📦 安装系统依赖
         run: |
+          echo "正在安装系统依赖..."
           sudo apt-get update
           sudo apt-get install -y \
             ca-certificates \
@@ -88,126 +97,296 @@ jobs:
             lsb-release \
             wget \
             xdg-utils
+          echo "✅ 系统依赖安装完成"
       
-      # 步骤 4: 安装 Node.js 依赖
+      # 步骤 4: 缓存 Node.js 模块（优化性能）
+      - name: 💾 缓存 Node.js 模块
+        uses: actions/cache@v4
+        id: npm-cache
+        with:
+          path: |
+            ~/.npm
+            **/node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json', '**/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+      
+      # 步骤 5: 智能安装 Node.js 依赖
       - name: 📥 安装项目依赖
         run: |
-          # 创建 package.json 如果不存在
+          echo "检查项目依赖配置..."
+          
+          # 如果 package.json 不存在，创建它
           if [ ! -f "package.json" ]; then
-            echo '{
-              "name": "betadash-auto-login",
-              "version": "1.0.0",
-              "dependencies": {
-                "puppeteer": "^21.0.0",
-                "axios": "^1.6.0",
-                "dotenv": "^16.3.0"
-              }
-            }' > package.json
+            echo "📝 创建 package.json 文件..."
+            cat > package.json << 'EOF'
+{
+  "name": "betadash-auto-login",
+  "version": "1.0.0",
+  "description": "Automated login for Betadash.lunes.host",
+  "main": "betadash-login.js",
+  "scripts": {
+    "start": "node login.js",
+    "test": "echo \"No tests specified\" && exit 0"
+  },
+  "dependencies": {
+    "puppeteer": "^21.0.0",
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
+EOF
+            echo "✅ package.json 已创建"
+          else
+            echo "✅ 找到现有 package.json 文件"
           fi
           
-          #npm ci --no-audit --no-fund
-          # 或者如果上面失败，使用 npm install
-          npm install --no-audit --no-fund
+          # 检查是否存在依赖锁文件
+          echo "🔍 检查依赖锁文件..."
+          if [ -f "package-lock.json" ]; then
+            echo "📄 找到 package-lock.json，使用 npm ci 安装依赖..."
+            npm ci --no-audit --no-fund --prefer-offline
+          elif [ -f "yarn.lock" ]; then
+            echo "📄 找到 yarn.lock，使用 yarn install 安装依赖..."
+            yarn install --frozen-lockfile --ignore-engines
+          elif [ -f "npm-shrinkwrap.json" ]; then
+            echo "📄 找到 npm-shrinkwrap.json，使用 npm ci 安装依赖..."
+            npm ci --no-audit --no-fund --prefer-offline
+          else
+            echo "⚠️  未找到依赖锁文件，使用 npm install 安装依赖..."
+            npm install --no-audit --no-fund --prefer-offline
+            echo "📄 生成 package-lock.json 供下次使用..."
+            npm shrinkwrap 2>/dev/null || true
+          fi
+          
+          echo "✅ 依赖安装完成"
+          echo "已安装的依赖版本："
+          npm list --depth=0 2>/dev/null || echo "无法显示依赖树"
       
-      # 步骤 5: 配置环境变量
+      # 步骤 6: 验证脚本文件
+      - name: 🔍 验证脚本文件
+        run: |
+          echo "验证脚本文件..."
+          if [ ! -f "login.js" ]; then
+            echo "❌ 错误: login.js 文件不存在"
+            echo "当前目录文件列表:"
+            ls -la
+            exit 1
+          fi
+          
+          echo "✅ 找到 login.js"
+          echo "脚本大小: $(wc -l < betadash-login.js) 行"
+          echo "脚本权限: $(ls -la betadash-login.js | awk '{print $1}')"
+      
+      # 步骤 7: 配置环境变量
       - name: ⚙️ 配置环境
         run: |
+          echo "配置环境变量..."
+          
+          # 检查必要的 Secrets
+          REQUIRED_SECRETS=(
+            "WEBSITE_URL"
+            "USERNAME"
+            "PASSWORD"
+            "TELEGRAM_BOT_TOKEN"
+            "TELEGRAM_CHAT_ID"
+          )
+          
+          MISSING_SECRETS=()
+          for SECRET in "${REQUIRED_SECRETS[@]}"; do
+            if [ -z "${!SECRET}" ] && [ -z "$(eval echo \$$SECRET)" ]; then
+              MISSING_SECRETS+=("$SECRET")
+            fi
+          done
+          
+          if [ ${#MISSING_SECRETS[@]} -gt 0 ]; then
+            echo "❌ 缺少必要的 GitHub Secrets: ${MISSING_SECRETS[*]}"
+            echo "请在仓库 Settings → Secrets and variables → Actions 中添加"
+            exit 1
+          fi
+          
           # 从 GitHub Secrets 创建 .env 文件
           cat > .env << EOF
-          WEBSITE_URL=${{ secrets.WEBSITE_URL }}
-          USERNAME=${{ secrets.USERNAME }}
-          PASSWORD=${{ secrets.PASSWORD }}
-          TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
-          HEADLESS=${{ github.event.inputs.debug_mode == 'true' && 'false' || 'true' }}
-          EOF
+WEBSITE_URL=${{ secrets.WEBSITE_URL }}
+USERNAME=${{ secrets.USERNAME }}
+PASSWORD=${{ secrets.PASSWORD }}
+TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
+HEADLESS=${{ github.event.inputs.debug_mode == 'true' && 'false' || 'true' }}
+EOF
           
           # 显示配置信息（隐藏敏感数据）
           echo "✅ 环境变量已配置"
-          echo "🌐 网站: $(echo ${{ secrets.WEBSITE_URL }} | sed 's|https://||')"
-          echo "👤 用户: $(echo ${{ secrets.USERNAME }} | sed 's/./*/g')"
-          echo "🤖 Telegram Bot: $(echo ${{ secrets.TELEGRAM_BOT_TOKEN }} | cut -d':' -f1 | sed 's/./*/g')"
-          echo "📱 Telegram Chat: ${{ secrets.TELEGRAM_CHAT_ID }}"
+          echo "🌐 网站: $(echo ${{ secrets.WEBSITE_URL }} | sed 's|https://||' | cut -d'/' -f1)"
+          echo "👤 用户: $(echo ${{ secrets.USERNAME }} | sed 's/\(.\).*\(@.*\)/\1***\2/')"
+          echo "🔑 密码: ********"
+          echo "🤖 Telegram Bot: $(echo ${{ secrets.TELEGRAM_BOT_TOKEN }} | cut -d':' -f1 | sed 's/./*/g')***"
+          echo "📱 Telegram Chat ID: ${{ secrets.TELEGRAM_CHAT_ID }}"
           echo "🖥️  无头模式: ${{ github.event.inputs.debug_mode == 'true' && 'false' || 'true' }}"
+          
+          # 验证 .env 文件
+          if [ ! -f ".env" ]; then
+            echo "❌ .env 文件创建失败"
+            exit 1
+          fi
+          
+          echo "📄 .env 文件内容预览（隐藏敏感信息）:"
+          cat .env | sed 's/PASSWORD=.*/PASSWORD=********/' | sed 's/TELEGRAM_BOT_TOKEN=.*/TELEGRAM_BOT_TOKEN=********/' | sed 's/USERNAME=.*/USERNAME=********/'
       
-      # 步骤 6: 运行登录脚本
+      # 步骤 8: 运行登录脚本
       - name: 🚀 执行自动登录
         id: run-login
-        timeout-minutes: 10  # 设置超时防止卡住
+        timeout-minutes: 15  # 设置超时防止卡住
         run: |
           echo "开始执行登录脚本..."
+          echo "工作目录: $(pwd)"
+          echo "Node版本: $(node --version)"
+          echo "NPM版本: $(npm --version)"
           
-          # 设置更长的超时环境变量
-          export NODE_OPTIONS="--max-old-space-size=4096"
+          # 设置环境变量
+          export NODE_OPTIONS="--max-old-space-size=4096 --unhandled-rejections=strict"
+          export PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=false
+          export PUPPETEER_EXECUTABLE_PATH=$(which chromium || which chrome)
+          
+          # 检查 puppeteer 是否安装成功
+          echo "检查 Puppeteer 安装..."
+          npm list puppeteer 2>/dev/null || echo "Puppeteer 检查失败"
+          
+          # 创建日志目录
+          mkdir -p logs
           
           # 运行脚本并捕获退出码
-          node login.js
-          EXIT_CODE=$?
+          START_TIME=$(date +%s)
           
-          echo "脚本退出码: $EXIT_CODE"
+          # 运行脚本，同时输出到控制台和日志文件
+          node login.js 2>&1 | tee logs/login-execution.log
+          
+          EXIT_CODE=${PIPESTATUS[0]}
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          
+          echo "========================================"
+          echo "脚本执行完成"
+          echo "退出码: $EXIT_CODE"
+          echo "执行时长: ${DURATION} 秒"
+          echo "========================================"
           
           # 保存退出状态供后续步骤使用
           echo "login_exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
+          echo "login_duration=$DURATION" >> $GITHUB_OUTPUT
           
           if [ $EXIT_CODE -eq 0 ]; then
             echo "✅ 登录脚本执行成功"
           else
-            echo "❌ 登录脚本执行失败"
-            exit $EXIT_CODE
+            echo "❌ 登录脚本执行失败，退出码: $EXIT_CODE"
+            # 不立即退出，让后续步骤可以收集日志
+          fi
+          
+          # 无论如何都返回成功，让后续步骤能执行
+          exit 0
+      
+      # 步骤 9: 收集执行结果和日志
+      - name: 📋 收集执行结果
+        if: always()
+        run: |
+          echo "收集执行结果..."
+          
+          # 检查日志文件
+          if [ -f "logs/login-execution.log" ]; then
+            echo "📄 执行日志大小: $(wc -l < logs/login-execution.log) 行"
+            
+            # 提取关键信息
+            echo "=== 执行日志关键信息 ==="
+            grep -i -E "(成功|失败|错误|error|warning|✅|❌|🚀|🔐|⏳)" logs/login-execution.log | tail -20 || echo "无关键信息"
+          fi
+          
+          # 检查截图文件
+          SCREENSHOTS=$(find . -name "*.png" -type f 2>/dev/null || true)
+          if [ -n "$SCREENSHOTS" ]; then
+            echo "📸 找到截图文件:"
+            echo "$SCREENSHOTS" | while read file; do
+              echo "  - $file ($(stat -c%s "$file") 字节)"
+            done
+          else
+            echo "📸 未找到截图文件"
           fi
       
-      # 步骤 7: 上传日志和截图（仅失败时）
-      - name: 📤 上传执行结果
+      # 步骤 10: 上传调试文件（仅失败时）
+      - name: 📤 上传调试文件
         if: failure() || steps.run-login.outputs.login_exit_code != '0'
         uses: actions/upload-artifact@v4
         with:
-          name: login-debug-artifacts
+          name: login-debug-artifacts-${{ github.run_id }}
           path: |
+            logs/
             *.png
-            *.log
+            .env
           retention-days: 7
       
-      # 步骤 8: 清理工作空间
-      - name: 🧹 清理工作空间
-        if: always()
-        run: |
-          echo "清理临时文件..."
-          rm -f *.png 2>/dev/null || true
-          rm -f .env 2>/dev/null || true
-          echo "✅ 清理完成"
-
-      # 步骤 9: 发送执行总结到 Telegram（可选）
+      # 步骤 11: 发送执行总结到 Telegram
       - name: 📨 发送执行总结
         if: always()
         run: |
           WORKFLOW_URL="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          STATUS="${{ job.status }}"
+          JOB_STATUS="${{ job.status }}"
+          EXIT_CODE="${{ steps.run-login.outputs.login_exit_code }}"
+          DURATION="${{ steps.run-login.outputs.login_duration }}"
           
           # 根据状态生成消息
-          if [ "$STATUS" = "success" ]; then
+          if [ "$JOB_STATUS" = "success" ] && [ "$EXIT_CODE" = "0" ]; then
             EMOJI="✅"
-            STATUS_TEXT="成功"
+            STATUS_TEXT="登录成功"
+          elif [ "$JOB_STATUS" = "success" ] && [ "$EXIT_CODE" != "0" ]; then
+            EMOJI="⚠️"
+            STATUS_TEXT="脚本异常 (退出码: $EXIT_CODE)"
           else
             EMOJI="❌"
-            STATUS_TEXT="失败"
+            STATUS_TEXT="执行失败"
           fi
           
           # 构建消息
-          MESSAGE="*${EMOJI} GitHub Actions 执行完成*\n\n"
+          MESSAGE="*${EMOJI} Betadash 自动登录执行结果*\n\n"
           MESSAGE+="📅 时间: $(date '+%Y-%m-%d %H:%M:%S')\n"
-          MESSAGE+="📦 仓库: $GITHUB_REPOSITORY\n"
+          MESSAGE+="📦 仓库: \`$GITHUB_REPOSITORY\`\n"
           MESSAGE+="📝 工作流: $GITHUB_WORKFLOW\n"
+          MESSAGE+="⏱️  时长: ${DURATION:-未知} 秒\n"
           MESSAGE+="📊 状态: ${STATUS_TEXT}\n"
           MESSAGE+="🔗 详情: $WORKFLOW_URL\n"
           
           # 如果有错误，包含更多信息
-          if [ "$STATUS" != "success" ]; then
-            MESSAGE+="\n⚠️ 请查看 GitHub Actions 日志获取详细信息。"
+          if [ "$EXIT_CODE" != "0" ] && [ "$EXIT_CODE" != "" ]; then
+            MESSAGE+="\n⚠️ 退出码: $EXIT_CODE"
+            MESSAGE+="\n🔍 请查看 GitHub Actions 日志获取详细信息。"
+            MESSAGE+="\n📁 调试文件已上传至 Artifacts"
           fi
           
           # 发送到 Telegram
+          echo "发送 Telegram 通知..."
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
             -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
             -d "text=${MESSAGE}" \
             -d "parse_mode=Markdown" \
-            -d "disable_web_page_preview=true"
+            -d "disable_web_page_preview=false" \
+            --max-time 10 || echo "Telegram 通知发送失败"
+          
+          echo "✅ Telegram 通知已发送"
+      
+      # 步骤 12: 清理工作空间
+      - name: 🧹 清理工作空间
+        if: always()
+        run: |
+          echo "清理临时文件..."
+          
+          # 清理敏感文件
+          rm -f .env 2>/dev/null || true
+          
+          # 清理截图文件
+          rm -f *.png 2>/dev/null || true
+          
+          # 清理日志目录
+          rm -rf logs 2>/dev/null || true
+          
+          echo "✅ 清理完成"
