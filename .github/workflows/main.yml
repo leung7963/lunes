@@ -105,9 +105,9 @@ jobs:
             }' > package.json
           fi
           
-          npm ci --no-audit --no-fund
+          #npm ci --no-audit --no-fund
           # 或者如果上面失败，使用 npm install
-          # npm install --no-audit --no-fund
+          npm install --no-audit --no-fund
       
       # 步骤 5: 配置环境变量
       - name: ⚙️ 配置环境
