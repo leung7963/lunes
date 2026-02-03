@@ -1,254 +1,325 @@
 const puppeteer = require('puppeteer');
 const axios = require('axios');
 
-// ===================== Telegram 通知函数 (保持不变) =====================
-async function sendTelegramMessage(botToken, chatId, message) {
+// ===================== Telegram 通知函数 =====================
+async function sendTelegramMessage(botToken, chatId, message, screenshotPath = null) {
   const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
-  await axios.post(url, {
-    chat_id: chatId,
-    text: message,
-    parse_mode: 'Markdown'
-  }).catch(error => {
-    console.error('Telegram 通知失败:', error.message);
-  });
+  
+  try {
+    await axios.post(url, {
+      chat_id: chatId,
+      text: message,
+      parse_mode: 'Markdown'
+    });
+    console.log('✅ Telegram 通知发送成功');
+  } catch (error) {
+    console.error('❌ Telegram 通知失败:', error.message);
+  }
 }
 
-// ===================== 核心修改：模拟点击处理Turnstile =====================
+// ===================== 核心：模拟点击处理 Turnstile =====================
 async function solveTurnstileDirectly(page) {
-  console.log('🔄 尝试通过模拟点击处理 Cloudflare Turnstile...');
-
-  // 1. 等待并定位Turnstile验证容器
-  // 注意：选择器可能需要根据实际页面调整，例如 '.cf-turnstile' 或 iframe
+  console.log('🔄 准备处理 Turnstile 验证...');
+  
   try {
-    await page.waitForSelector('[class*="turnstile"], iframe[src*="challenges.cloudflare.com"]', { timeout: 10000 });
-  } catch (e) {
-    console.log('⚠️  未找到明确的Turnstile容器，尝试直接查找cf-turnstile-response输入框');
-  }
-
-  // 2. 模拟人类点击（关键步骤）
-  // 在验证容器区域内，随机偏移点击，模拟人类不精确操作
-  await page.evaluate(() => {
-    const container = document.querySelector('.cf-turnstile') || document.querySelector('iframe[src*="challenges.cloudflare.com"]')?.parentElement;
-    if (container) {
+    // 1. 等待验证组件加载
+    await page.waitForSelector('div.g-recaptcha', { timeout: 15000 });
+    console.log('✅ 找到验证组件');
+    
+    // 2. 执行偏移点击模拟人类操作
+    console.log('🖱️ 执行模拟点击...');
+    const clickResult = await page.evaluate(() => {
+      const container = document.querySelector('div.g-recaptcha');
+      if (!container) return { success: false, reason: '未找到验证容器' };
+      
       const rect = container.getBoundingClientRect();
-      // 计算容器中心点
-      const centerX = rect.left + rect.width / 2;
-      const centerY = rect.top + rect.height / 2;
       
-      // 生成随机偏移量（例如 -80 到 80 像素之间），模拟人类点击偏差
-      const offsetX = centerX + (Math.random() * 160 - 80);
-      const offsetY = centerY + (Math.random() * 160 - 80);
+      // 计算点击位置：容器中心向左偏移120像素
+      const clickX = rect.left + rect.width / 2 - 120;
+      const clickY = rect.top + rect.height / 2;
       
-      // 创建并触发鼠标事件
-      const mouseDownEvent = new MouseEvent('mousedown', {
-        view: window,
-        bubbles: true,
-        cancelable: true,
-        clientX: offsetX,
-        clientY: offsetY
+      // 创建并触发鼠标事件序列
+      const events = ['mousedown', 'mouseup', 'click'];
+      events.forEach(eventType => {
+        const event = new MouseEvent(eventType, {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+          clientX: clickX,
+          clientY: clickY
+        });
+        container.dispatchEvent(event);
       });
-      container.dispatchEvent(mouseDownEvent);
       
-      const mouseUpEvent = new MouseEvent('mouseup', {
-        view: window,
-        bubbles: true,
-        cancelable: true,
-        clientX: offsetX,
-        clientY: offsetY
-      });
-      container.dispatchEvent(mouseUpEvent);
-      
-      const clickEvent = new MouseEvent('click', {
-        view: window,
-        bubbles: true,
-        cancelable: true,
-        clientX: offsetX,
-        clientY: offsetY
-      });
-      container.dispatchEvent(clickEvent);
-      
-      console.log('🖱️  已在坐标(' + Math.round(offsetX) + ',' + Math.round(offsetY) + ')执行模拟点击');
-      return true;
-    }
-    return false;
-  });
-
-  console.log('⏳ 等待验证令牌生成...');
-
-  // 3. 轮询检查令牌是否已生成（关键步骤）
-  let token = null;
-  for (let i = 0; i < 20; i++) { // 最多等待20秒
-    token = await page.evaluate(() => {
-      // 尝试从隐藏的textarea获取令牌
-      const textarea = document.querySelector('textarea[name="cf-turnstile-response"]');
-      if (textarea && textarea.value && textarea.value.length > 10) {
-        return textarea.value;
-      }
-      // 某些网站可能将令牌存储在input或其他元素中
-      const input = document.querySelector('input[name="cf-turnstile-response"]');
-      if (input && input.value && input.value.length > 10) {
-        return input.value;
-      }
-      return null;
-    });
-
-    if (token) {
-      console.log('✅ Turnstile 令牌已获取');
-      break;
-    }
-
-    // 等待1秒后再次检查
-    await page.waitForTimeout(1000);
-  }
-
-  if (!token) {
-    // 如果页面有挑战，尝试自动处理
-    const hasChallenge = await page.evaluate(() => {
-      return document.querySelector('#challenge-running') !== null || 
-             document.querySelector('.challenge-form') !== null;
+      return { 
+        success: true, 
+        clickX: Math.round(clickX), 
+        clickY: Math.round(clickY),
+        containerSize: { width: rect.width, height: rect.height }
+      };
     });
     
-    if (hasChallenge) {
-      console.log('⚠️  检测到交互式挑战，尝试自动处理...');
-      // 这里可以添加处理简单挑战的逻辑
+    if (!clickResult.success) {
+      throw new Error(clickResult.reason);
     }
     
-    throw new Error('未能获取Turnstile令牌，验证可能未通过');
+    console.log(`✅ 模拟点击完成 (X: ${clickResult.clickX}, Y: ${clickResult.clickY})`);
+    
+    // 3. 轮询检查令牌生成（最多等待25秒）
+    console.log('⏳ 等待验证令牌生成...');
+    let token = null;
+    
+    for (let attempt = 1; attempt <= 25; attempt++) {
+      await page.waitForTimeout(1000); // 每秒检查一次
+      
+      token = await page.evaluate(() => {
+        // 直接查找 cf-turnstile-response 输入框
+        const cfInput = document.querySelector('input[name="cf-turnstile-response"]');
+        if (cfInput && cfInput.value && cfInput.value.length > 20) {
+          return cfInput.value;
+        }
+        return null;
+      });
+      
+      if (token) {
+        console.log(`✅ Turnstile 令牌获取成功 (第${attempt}秒)`);
+        console.log(`  令牌预览: ${token.substring(0, 30)}...`);
+        
+        // 确保 g-recaptcha-response 字段也有值
+        await page.evaluate((tokenValue) => {
+          const gInput = document.querySelector('input[name="g-recaptcha-response"]');
+          if (gInput) {
+            gInput.value = tokenValue;
+          }
+        }, token);
+        
+        break;
+      }
+      
+      if (attempt % 5 === 0) {
+        console.log(`  仍在等待验证... (已等待 ${attempt} 秒)`);
+      }
+    }
+    
+    if (!token) {
+      // 最终检查
+      const finalCheck = await page.evaluate(() => {
+        const cfInput = document.querySelector('input[name="cf-turnstile-response"]');
+        return {
+          exists: !!cfInput,
+          valueLength: cfInput ? cfInput.value.length : 0
+        };
+      });
+      
+      throw new Error(`验证超时。输入框存在: ${finalCheck.exists}, 值长度: ${finalCheck.valueLength}`);
+    }
+    
+    return true;
+    
+  } catch (error) {
+    console.error('❌ Turnstile 处理失败:', error.message);
+    throw error;
   }
-
-  return true;
 }
 
 // ===================== 主登录函数 =====================
 async function login() {
+  // 环境变量检查
+  const requiredEnvVars = ['WEBSITE_URL', 'USERNAME', 'PASSWORD', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'];
+  const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
+  
+  if (missingVars.length > 0) {
+    console.error('❌ 缺少必要的环境变量:', missingVars.join(', '));
+    console.log('💡 请确保 .env 文件包含以下变量:');
+    console.log('   WEBSITE_URL, USERNAME, PASSWORD, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID');
+    process.exit(1);
+  }
+  
+  console.log('🚀 开始登录流程...');
+  console.log(`🌐 目标网站: ${process.env.WEBSITE_URL}`);
+  console.log(`👤 登录账号: ${process.env.USERNAME.replace(/(.{2}).*(@.*)/, '$1***$2')}`);
+  
   const browser = await puppeteer.launch({
-    headless: process.env.HEADLESS !== 'false', // 默认无头，可设置HEADLESS=false显示浏览器
+    headless: process.env.HEADLESS !== 'false',
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
       '--disable-gpu',
-      '--window-size=1280,720'
-    ]
+      '--window-size=1280,720',
+      '--disable-blink-features=AutomationControlled'
+    ],
+    defaultViewport: { width: 1280, height: 720 }
   });
+  
   const page = await browser.newPage();
-
-  // 设置更真实的User-Agent
+  
+  // 设置更真实的浏览器指纹
   await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-
+  await page.evaluateOnNewDocument(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => false });
+  });
+  
+  let success = false;
+  let finalMessage = '';
+  
   try {
     // 1. 访问登录页面
-    console.log(`🌐 访问登录页面: ${process.env.WEBSITE_URL}`);
+    console.log('\n📄 加载登录页面...');
     await page.goto(process.env.WEBSITE_URL, { 
       waitUntil: 'networkidle2',
-      timeout: 30000 
+      timeout: 30000
     });
-
-    // 2. 输入凭据（根据实际页面调整选择器）
+    
+    // 截图记录初始页面
+    await page.screenshot({ path: '01-initial-page.png' });
+    
+    // 2. 填写登录表单
     console.log('📝 填写登录信息...');
-    // 邮箱输入 - 根据之前页面分析，可能是 input[name="email"] 或 #email
-    await page.waitForSelector('input[name="email"], #email, input[type="email"]', { timeout: 10000 });
-    await page.type('input[name="email"], #email, input[type="email"]', process.env.USERNAME, { delay: 50 }); // 模拟人工输入速度
-
-    // 密码输入 - 可能是 input[name="password"] 或 #password
-    await page.type('input[name="password"], #password, input[type="password"]', process.env.PASSWORD, { delay: 50 });
-
+    
+    // 查找并填写邮箱
+    const emailSelectors = ['input[name="email"]', 'input[type="email"]', '#email'];
+    await page.waitForSelector(emailSelectors.join(','), { timeout: 10000 });
+    
+    // 模拟人类输入速度
+    await page.type(emailSelectors.join(','), process.env.USERNAME, { delay: 50 + Math.random() * 50 });
+    console.log('✅ 邮箱填写完成');
+    
+    // 查找并填写密码
+    const passwordSelectors = ['input[name="password"]', 'input[type="password"]', '#password'];
+    await page.type(passwordSelectors.join(','), process.env.PASSWORD, { delay: 50 + Math.random() * 50 });
+    console.log('✅ 密码填写完成');
+    
+    await page.screenshot({ path: '02-form-filled.png' });
+    
     // 3. 处理Cloudflare Turnstile验证
+    console.log('\n🔐 处理验证码...');
     await solveTurnstileDirectly(page);
-
-    // 4. 提交登录表单
-    console.log('🚀 提交登录表单...');
-    // 登录按钮文字可能是 "Continue to dashboard" 或 "Sign in"
+    
+    await page.screenshot({ path: '03-after-verification.png' });
+    
+    // 4. 点击登录按钮
+    console.log('\n🚀 提交登录表单...');
+    
+    // 方法1: 直接点击提交按钮
     await page.evaluate(() => {
-      const buttons = Array.from(document.querySelectorAll('button, input[type="submit"]'));
-      const targetBtn = buttons.find(btn => 
-        btn.textContent.includes('Continue') || 
-        btn.textContent.includes('Sign in') ||
-        btn.textContent.includes('Login') ||
-        btn.value === 'Continue'
-      );
-      if (targetBtn) {
-        targetBtn.click();
+      const submitBtn = document.querySelector('button.submit-btn, button[type="submit"]');
+      if (submitBtn) {
+        submitBtn.click();
         return true;
       }
-      // 如果没有找到，点击第一个提交按钮
-      const submitBtn = document.querySelector('button[type="submit"], input[type="submit"]');
-      if (submitBtn) submitBtn.click();
       return false;
     });
-
-    // 5. 等待登录完成
-    console.log('⏳ 等待登录跳转...');
-    await page.waitForNavigation({ 
-      waitUntil: 'networkidle2', 
-      timeout: 15000 
-    }).catch(() => {
-      console.log('⚠️  导航超时，但可能已登录成功');
-    });
-
-    // 6. 验证登录结果
+    
+    // 等待页面跳转或变化
+    console.log('⏳ 等待登录响应...');
+    await page.waitForTimeout(3000);
+    
+    // 尝试检测导航
+    try {
+      await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 });
+    } catch (e) {
+      console.log('⚠️  页面导航超时，可能已停留在当前页');
+    }
+    
+    // 5. 验证登录结果
+    console.log('\n📊 验证登录结果...');
     const currentUrl = page.url();
     const pageTitle = await page.title();
     
-    console.log(`📊 登录结果检查:
-      当前URL: ${currentUrl}
-      页面标题: ${pageTitle}`);
-
-    // 登录成功判断：URL不再包含login且标题不是登录页
-    if (!currentUrl.includes('/login') && !pageTitle.toLowerCase().includes('sign in') && !pageTitle.toLowerCase().includes('login')) {
-      const successMessage = `*✅ 登录成功！*\n\n` +
-                            `时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}\n` +
-                            `账号: ${process.env.USERNAME}\n` +
-                            `页面: ${currentUrl}\n` +
-                            `标题: ${pageTitle}`;
-      
-      await sendTelegramMessage(process.env.TELEGRAM_BOT_TOKEN, process.env.TELEGRAM_CHAT_ID, successMessage);
-      console.log('✅ 登录成功！Telegram通知已发送。');
-      
-      // 可选：截取成功页面
-      await page.screenshot({ path: 'login-success.png', fullPage: false });
-    } else {
-      // 可能登录失败
-      await page.screenshot({ path: 'login-ambiguous.png', fullPage: true });
-      const warningMessage = `*⚠️  登录状态待确认*\n\n` +
-                            `时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}\n` +
-                            `账号: ${process.env.USERNAME}\n` +
-                            `当前仍在登录相关页面\n` +
-                            `URL: ${currentUrl}\n` +
-                            `标题: ${pageTitle}`;
-      await sendTelegramMessage(process.env.TELEGRAM_BOT_TOKEN, process.env.TELEGRAM_CHAT_ID, warningMessage);
-      console.log('⚠️  登录状态不明确，已发送警告通知');
-    }
-
-  } catch (error) {
-    // 错误处理
-    console.error('❌ 登录失败：', error.message);
+    console.log(`   当前URL: ${currentUrl}`);
+    console.log(`   页面标题: ${pageTitle}`);
     
-    // 截取失败页面
+    await page.screenshot({ path: '04-final-page.png' });
+    
+    // 判断登录成功条件
+    const isLoginPage = currentUrl.includes('/login') || 
+                       pageTitle.toLowerCase().includes('sign in') ||
+                       pageTitle.toLowerCase().includes('login');
+    
+    if (!isLoginPage) {
+      success = true;
+      finalMessage = `*✅ 登录成功！*\n\n` +
+                    `⏰ 时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}\n` +
+                    `👤 账号: ${process.env.USERNAME}\n` +
+                    `🌐 当前页面: ${currentUrl}\n` +
+                    `📝 页面标题: ${pageTitle}\n` +
+                    `\n✅ 自动化流程执行完毕`;
+      
+      console.log('🎉 登录成功！');
+    } else {
+      // 检查是否有错误信息
+      const errorText = await page.evaluate(() => {
+        const errorDiv = document.querySelector('.error, .alert-danger, .text-red-500, [class*="error"], [class*="alert"]');
+        return errorDiv ? errorDiv.textContent.trim() : '无明确错误信息';
+      });
+      
+      finalMessage = `*⚠️  登录可能失败*\n\n` +
+                    `⏰ 时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}\n` +
+                    `👤 账号: ${process.env.USERNAME}\n` +
+                    `🌐 仍停留在: ${currentUrl}\n` +
+                    `📝 页面标题: ${pageTitle}\n` +
+                    `❌ 错误信息: ${errorText.substring(0, 100)}`;
+      
+      console.log('⚠️  可能登录失败，当前仍在登录页面');
+    }
+    
+  } catch (error) {
+    console.error('\n❌ 登录过程中发生错误:', error.message);
+    
+    // 错误时截图
     await page.screenshot({ 
-      path: 'login-failure.png', 
+      path: '05-error-occurred.png',
       fullPage: true 
     });
     
-    // 发送错误通知
-    const errorMessage = `*❌ 登录失败！*\n\n` +
-                        `时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}\n` +
-                        `账号: ${process.env.USERNAME}\n` +
-                        `错误: ${error.message}\n` +
-                        `截图已保存: login-failure.png`;
+    finalMessage = `*❌ 登录失败！*\n\n` +
+                  `⏰ 时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}\n` +
+                  `👤 账号: ${process.env.USERNAME}\n` +
+                  `❌ 错误类型: ${error.name}\n` +
+                  `📝 错误详情: ${error.message}\n` +
+                  `\n🔍 请查看错误截图: 05-error-occurred.png`;
     
-    await sendTelegramMessage(process.env.TELEGRAM_BOT_TOKEN, process.env.TELEGRAM_CHAT_ID, errorMessage);
-    
-    throw error;
   } finally {
+    // 发送Telegram通知
+    await sendTelegramMessage(
+      process.env.TELEGRAM_BOT_TOKEN, 
+      process.env.TELEGRAM_CHAT_ID, 
+      finalMessage
+    );
+    
     // 关闭浏览器
     await browser.close();
-    console.log('🔄 浏览器已关闭');
+    console.log('\n🔄 浏览器已关闭');
+    
+    // 清理截图文件（可选）
+    if (success) {
+      const fs = require('fs');
+      const files = ['01-initial-page.png', '02-form-filled.png', '03-after-verification.png', '04-final-page.png'];
+      files.forEach(file => {
+        if (fs.existsSync(file)) fs.unlinkSync(file);
+      });
+      console.log('🧹 临时截图已清理');
+    }
+    
+    console.log(`\n${success ? '✅' : '❌'} 脚本执行完成`);
+    process.exit(success ? 0 : 1);
   }
 }
 
-// 启动登录流程
-login().catch(error => {
-  console.error('脚本执行失败:', error);
-  process.exit(1);
-});
+// ===================== 脚本执行 =====================
+// 检查是否直接运行此脚本
+if (require.main === module) {
+  console.log(`
+==========================================
+    Betadash.lunes.host 自动化登录脚本
+==========================================
+  `);
+  
+  login().catch(error => {
+    console.error('💥 脚本执行失败:', error);
+    process.exit(1);
+  });
+}
+
+module.exports = { login };
