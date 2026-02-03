@@ -4,7 +4,7 @@
   "description": "Automated login for Betadash.lunes.host with Cloudflare Turnstile handling",
   "main": "betadash-login.js",
   "scripts": {
-    "start": "node betadash-login.js",
+    "start": "node login.js",
     "test": "echo \"No tests specified\" && exit 0",
     "ci-test": "echo \"Running in CI environment\" && HEADLESS=true node betadash-login.js"
   },
