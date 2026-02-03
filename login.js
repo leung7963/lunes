@@ -70,7 +70,8 @@ async function solveTurnstileDirectly(page) {
     let token = null;
     
     for (let attempt = 1; attempt <= 25; attempt++) {
-      await page.waitForTimeout(1000); // 每秒检查一次
+      // 使用 page.waitFor 替代 page.waitForTimeout（兼容旧版）
+      await page.waitFor(1000);
       
       token = await page.evaluate(() => {
         // 直接查找 cf-turnstile-response 输入框
@@ -213,7 +214,8 @@ async function login() {
     
     // 等待页面跳转或变化
     console.log('⏳ 等待登录响应...');
-    await page.waitForTimeout(3000);
+    // 使用 page.waitFor 替代 page.waitForTimeout
+    await page.waitFor(3000);
     
     // 尝试检测导航
     try {
@@ -315,6 +317,9 @@ if (require.main === module) {
     Betadash.lunes.host 自动化登录脚本
 ==========================================
   `);
+  
+  // 加载环境变量
+  require('dotenv').config();
   
   login().catch(error => {
     console.error('💥 脚本执行失败:', error);
