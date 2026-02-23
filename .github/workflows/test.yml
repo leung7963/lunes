@@ -75,7 +75,7 @@ jobs:
           MODE: ${{ github.event.inputs.mode || 'full' }}
           PROXY: ${{ github.event.inputs.proxy }}
         run: |
-          CMD="python script.py"
+          CMD="python login.py"
           if [ -n "$MODE" ]; then
             case "$MODE" in
               bypass-only) CMD="$CMD --bypass-only" ;;
