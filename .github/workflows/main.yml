@@ -19,11 +19,19 @@ jobs:
         with:
           python-version: '3.10'   # 指定 Python 版本
 
+      - name:
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libglib2.0-0 libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 libgbm1
+          wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo dpkg -i google-chrome-stable_current_amd64.deb
+          sudo apt-get install -f -y
+          pip install seleniumbase pyvirtualdisplay
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install playwright requests
-          pip install -r requirements.txt
+         # pip install -r requirements.txt
 
       - name: Install Playwright browsers
         run: |
