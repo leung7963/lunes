@@ -1,0 +1,39 @@
+# .github/workflows/bypass-cf.yml
+name: Cloudflare Turnstile Bypass
+
+on:
+  # 允许手动触发（支持自定义 URL 和代理）
+  workflow_dispatch:
+
+jobs:
+  bypass:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: 安装系统依赖（Xvfb 和 Chromium）
+        run: |
+            sudo apt-get update
+            sudo apt-get install -y xvfb libglib2.0-0 libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 libgbm1
+            wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+            sudo dpkg -i google-chrome-stable_current_amd64.deb
+            sudo apt-get install -f -y
+            pip install seleniumbase pyvirtualdisplay
+      - name: 执行绕过脚本
+        run: python -u bypass.py https://betadash.lunes.host/login?next=/servers/59292
+
+      - name: 上传生成的截图和 Cookie
+        uses: actions/upload-artifact@v4
+        with:
+          name: bypass-results-${{ github.run_id }}
+          path: |
+            output/screenshots/*.png
+            output/cookies/*.json
+            output/cookies/*.txt
+          if-no-files-found: warn
