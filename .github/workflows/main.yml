@@ -31,4 +31,5 @@ jobs:
           pip install seleniumbase pyvirtualdisplay
 
       - name: Bypass
-        run: python -u bypass.py https://betadash.lunes.host/login?next=/servers/59292
+        run: |
+          python -u bypass.py https://betadash.lunes.host/login?next=/servers/59292
