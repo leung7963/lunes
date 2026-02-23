@@ -25,6 +25,8 @@ jobs:
             sudo dpkg -i google-chrome-stable_current_amd64.deb
             sudo apt-get install -f -y
             pip install seleniumbase pyvirtualdisplay
+            pip install playwright seleniumbase requests pyvirtualdisplay
+            playwright install chromium
       - name: 执行绕过脚本
         run: python -u login.py
 
