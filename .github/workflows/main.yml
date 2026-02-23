@@ -10,18 +10,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 设置 Python 环境（可根据需要调整版本）
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.x'  # 使用最新的 Python 3，也可指定具体版本如 '3.10'
+          python-version: '3.x'
 
-      # 验证 Python 是否安装成功
       - name: Verify Python
         run: python --version
 
-      # 执行安装脚本
-      - name: Run install script
+      - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb libglib2.0-0 libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 libgbm1
@@ -30,6 +30,5 @@ jobs:
           sudo apt-get install -f -y
           pip install seleniumbase pyvirtualdisplay
 
-      - name: Bypass
-        run: |
-          python -u bypass.py https://betadash.lunes.host/login?next=/servers/59292
+      - name: Bypass Cloudflare
+        run: python -u bypass.py https://betadash.lunes.host/login?next=/servers/59292
