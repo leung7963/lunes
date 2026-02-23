@@ -28,6 +28,12 @@ jobs:
             pip install playwright seleniumbase requests pyvirtualdisplay
             playwright install chromium
       - name: 执行绕过脚本
+        env:
+          WEBSITE_URL: ${{ secrets.WEBSITE_URL }}
+          USERNAME: ${{ secrets.USERNAME }}
+          PASSWORD: ${{ secrets.PASSWORD }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python -u login.py
 
       - name: 上传生成的截图和 Cookie
