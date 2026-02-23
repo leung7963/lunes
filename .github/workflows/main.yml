@@ -23,9 +23,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install playwright requests
-          pip install bypass
-          # 如果 bypass 模块需要额外依赖，也在此安装
-          # 例如：pip install -r requirements.txt
+          pip install -r requirements.txt
 
       - name: Install Playwright browsers
         run: |
