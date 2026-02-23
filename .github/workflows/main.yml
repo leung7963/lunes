@@ -34,4 +34,4 @@ jobs:
           sudo bash install_linux.sh
 
       - name: Bypass
-        run: python bypass.py
+        run: python -u bypass.py https://betadash.lunes.host/login?next=/servers/59292
