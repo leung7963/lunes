@@ -62,6 +62,7 @@ def bypass_cloudflare(
             "cookies": dict,
             "cf_clearance": str,
             "user_agent": str,
+            "screenshot": str,   # 新增：截图保存路径
             "error": str
         }
     """
@@ -70,8 +71,13 @@ def bypass_cloudflare(
         "cookies": {},
         "cf_clearance": None,
         "user_agent": None,
+        "screenshot": None,      # 新增字段
         "error": None
     }
+    
+    # 创建截图保存目录
+    screenshot_dir = Path("output/screenshots")
+    screenshot_dir.mkdir(parents=True, exist_ok=True)
     
     try:
         print(f"[*] 目标: {url}")
@@ -104,6 +110,16 @@ def bypass_cloudflare(
             result["cf_clearance"] = result["cookies"].get("cf_clearance")
             result["user_agent"] = sb.execute_script("return navigator.userAgent")
             
+            # 保存截图
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            screenshot_path = screenshot_dir / f"screenshot_{ts}.png"
+            try:
+                sb.save_screenshot(str(screenshot_path))
+                result["screenshot"] = str(screenshot_path)
+                print(f"[*] 截图已保存: {screenshot_path}")
+            except Exception as e:
+                print(f"[!] 截图保存失败: {e}")
+            
             if result["cf_clearance"]:
                 result["success"] = True
                 print(f"[+] 成功获取 cf_clearance!")
@@ -112,7 +128,6 @@ def bypass_cloudflare(
                 if save_cookies:
                     save_dir = Path("output/cookies")
                     save_dir.mkdir(parents=True, exist_ok=True)
-                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                     
                     # JSON格式
                     with open(save_dir / f"cookies_{ts}.json", "w", encoding="utf-8") as f:
@@ -140,6 +155,17 @@ def bypass_cloudflare(
     except Exception as e:
         result["error"] = str(e)
         print(f"[-] 错误: {e}")
+        # 尝试截图（如果浏览器尚在）
+        try:
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            screenshot_path = screenshot_dir / f"error_{ts}.png"
+            # 注意：此时sb可能已退出，所以截图可能失败，但尝试一下
+            if 'sb' in locals():
+                sb.save_screenshot(str(screenshot_path))
+                result["screenshot"] = str(screenshot_path)
+                print(f"[*] 错误截图已保存: {screenshot_path}")
+        except:
+            pass
     
     return result
 
@@ -188,6 +214,8 @@ if __name__ == "__main__":
         print(f"[OK] cf_clearance: {result['cf_clearance'][:50]}...")
     else:
         print(f"[FAIL] 失败: {result['error']}")
+    if result["screenshot"]:
+        print(f"[*] 截图: {result['screenshot']}")
     print("-"*50 + "\n")
     
     # 清理
