@@ -26,7 +26,7 @@ jobs:
             sudo apt-get install -f -y
             pip install seleniumbase pyvirtualdisplay
       - name: 执行绕过脚本
-        run: python -u bypass.py https://betadash.lunes.host/login?next=/servers/59292
+        run: python -u login.py
 
       - name: 上传生成的截图和 Cookie
         uses: actions/upload-artifact@v4
