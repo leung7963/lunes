@@ -44,9 +44,7 @@ jobs:
             libxrandr2 \
             libgbm1 \
             libpango-1.0-0 \
-            libcairo2 \
-            libasound2
-
+            libcairo2
       - name: 设置 Python
         uses: actions/setup-python@v5
         with:
