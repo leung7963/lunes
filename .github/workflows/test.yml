@@ -1,47 +1,103 @@
-# .github/workflows/bypass-cf.yml
-name: Cloudflare Turnstile Bypass
+name: Cloudflare Bypass & Login
 
 on:
-  # 允许手动触发（支持自定义 URL 和代理）
-  workflow_dispatch:
+  schedule:
+    # 每天 UTC 时间 02:00 运行（可根据需要调整）
+    - cron: '0 2 * * *'
+  workflow_dispatch:   # 允许手动触发
+    inputs:
+      mode:
+        description: '运行模式'
+        required: true
+        default: 'full'
+        type: choice
+        options:
+          - full        # 绕过 + 登录
+          - bypass-only # 仅绕过
+          - login-only  # 仅登录
+      proxy:
+        description: '代理地址（可选）'
+        required: false
+        type: string
 
 jobs:
-  bypass:
+  run-script:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 设置 Python 3.10
+      - name: 安装系统依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            xvfb \
+            libgbm1 \
+            libnss3 \
+            libatk-bridge2.0-0 \
+            libdrm2 \
+            libxkbcommon0 \
+            libxcomposite1 \
+            libxdamage1 \
+            libxrandr2 \
+            libgbm1 \
+            libpango-1.0-0 \
+            libcairo2 \
+            libasound2
+
+      - name: 设置 Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: 安装系统依赖（Xvfb 和 Chromium）
+      - name: 安装 Python 依赖
         run: |
-            sudo apt-get update
-            sudo apt-get install -y xvfb libglib2.0-0 libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 libgbm1
-            wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-            sudo dpkg -i google-chrome-stable_current_amd64.deb
-            sudo apt-get install -f -y
-            pip install seleniumbase pyvirtualdisplay
-            pip install playwright seleniumbase requests pyvirtualdisplay
-            playwright install chromium
-      - name: 执行绕过脚本
+          pip install --upgrade pip
+          pip install playwright seleniumbase requests pyvirtualdisplay
+          playwright install chromium
+
+      - name: 设置环境变量（从 Secrets）
         env:
           WEBSITE_URL: ${{ secrets.WEBSITE_URL }}
           USERNAME: ${{ secrets.USERNAME }}
           PASSWORD: ${{ secrets.PASSWORD }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python -u login.py
+        run: |
+          echo "WEBSITE_URL=${WEBSITE_URL}" >> $GITHUB_ENV
+          echo "USERNAME=${USERNAME}" >> $GITHUB_ENV
+          echo "PASSWORD=${PASSWORD}" >> $GITHUB_ENV
+          echo "TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}" >> $GITHUB_ENV
+          echo "TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}" >> $GITHUB_ENV
 
-      - name: 上传生成的截图和 Cookie
+      - name: 运行脚本（使用 xvfb 虚拟显示）
+        env:
+          MODE: ${{ github.event.inputs.mode || 'full' }}
+          PROXY: ${{ github.event.inputs.proxy }}
+        run: |
+          CMD="python script.py"
+          if [ -n "$MODE" ]; then
+            case "$MODE" in
+              bypass-only) CMD="$CMD --bypass-only" ;;
+              login-only)  CMD="$CMD --login-only" ;;
+              full)        ;; # 不加参数即为默认完整流程
+            esac
+          fi
+          if [ -n "$PROXY" ]; then
+            CMD="$CMD --proxy $PROXY"
+          fi
+          echo "执行命令: xvfb-run -a $CMD"
+          xvfb-run -a $CMD
+        # 注意：脚本应命名为 script.py 放在仓库根目录，或调整路径
+
+      - name: 上传生成的文件（截图、Cookie等）
+        if: always()   # 即使失败也上传
         uses: actions/upload-artifact@v4
         with:
-          name: bypass-results-${{ github.run_id }}
+          name: output-files
           path: |
-            output/screenshots/*.png
-            output/cookies/*.json
-            output/cookies/*.txt
-          if-no-files-found: warn
+            login-failure.png
+            output/cookies/
+          if-no-files-found: ignore
