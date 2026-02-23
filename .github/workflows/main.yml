@@ -1,8 +1,6 @@
 name: Install Cloudflare Bypass with Python
 
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -32,3 +30,5 @@ jobs:
 
       - name: Bypass Cloudflare
         run: python -u bypass.py https://betadash.lunes.host/login?next=/servers/59292
+      - name: login
+        run: python -u login.py
