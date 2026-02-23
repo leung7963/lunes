@@ -10,13 +10,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 检出外部仓库（不检出当前仓库）
-      - name: Checkout external repository
-        uses: actions/checkout@v4
-        with:
-          repository: 1837620622/cloudflare-bypass-2026
-          path: cloudflare-bypass-2026
-
       # 设置 Python 环境（可根据需要调整版本）
       - name: Setup Python
         uses: actions/setup-python@v5
