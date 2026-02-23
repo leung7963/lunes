@@ -30,8 +30,12 @@ jobs:
       # 执行安装脚本
       - name: Run install script
         run: |
-          cd cloudflare-bypass-2026
-          sudo bash install_linux.sh
+          sudo apt-get update
+          sudo apt-get install -y xvfb libglib2.0-0 libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 libgbm1 libasound2
+          wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo dpkg -i google-chrome-stable_current_amd64.deb
+          sudo apt-get install -f -y
+          pip install seleniumbase pyvirtualdisplay
 
       - name: Bypass
         run: python -u bypass.py https://betadash.lunes.host/login?next=/servers/59292
