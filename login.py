@@ -101,7 +101,7 @@ def login_lunes(
                     print(f"[!] 点击验证码出错: {e}")
 
             # 等待 Turnstile 自动填充隐藏字段（通常很快）
-            print("[*] 等待 Turnstile 完成验证..."
+            print("[*] 等待 Turnstile 完成验证...")
 
             # 定位邮箱、密码输入框
             email_input = sb.find_element("input#email")
