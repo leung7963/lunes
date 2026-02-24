@@ -44,7 +44,7 @@ def setup_display():
 def login_lunes(
     email: str,
     password: str,
-    login_url: str = "https://example.com/login",  # 替换为实际登录页URL
+    login_url: str = "https://betadash.lunes.host/login",  # 替换为实际登录页URL
     proxy: Optional[str] = None,
     timeout: float = 60.0,
     save_cookies: bool = True
