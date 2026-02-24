@@ -1,220 +1,227 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Cloudflare 绕过 + 自动登录（单浏览器方案 - 增强版）
-==================================================
-功能：
-1. 使用 SeleniumBase UC 模式打开登录页
-2. 自动检测并处理 Cloudflare 各种形式的验证（iframe、Turnstile等）
-3. 填写登录表单并提交
-4. 通过 Telegram 发送成功/失败通知
-
-环境变量：
-    WEBSITE_URL           - 目标网站登录页URL
-    USERNAME              - 登录用户名
-    PASSWORD              - 登录密码
-    TELEGRAM_BOT_TOKEN    - Telegram Bot Token
-    TELEGRAM_CHAT_ID      - 接收通知的聊天ID
-
-支持 Linux 无头服务器（自动启动 Xvfb）
-"""
+# ============================================================
+# Lunes Host 自动登录脚本（支持 Cloudflare Turnstile）
+# 基于 SeleniumBase UC Mode
+# 支持 Mac / Windows / Linux
+# ============================================================
 
 import os
 import sys
 import time
+import json
 import platform
 from datetime import datetime
+from pathlib import Path
+from typing import Optional, Dict, Any
 
-import requests
-
-# SeleniumBase 核心
-try:
-    from seleniumbase import SB
-except ImportError:
-    print("[!] 请安装 seleniumbase: pip install seleniumbase")
-    sys.exit(1)
-
-# Linux 虚拟显示支持
-if platform.system().lower() == "linux":
-    try:
-        from pyvirtualdisplay import Display
-    except ImportError:
-        print("[!] 请安装 pyvirtualdisplay: pip install pyvirtualdisplay")
-        print("[!] 并安装系统依赖: sudo apt-get install -y xvfb")
-        sys.exit(1)
+from seleniumbase import SB
 
 
-# ========== 读取环境变量 ==========
-WEBSITE_URL = os.getenv("WEBSITE_URL")
-USERNAME = os.getenv("USERNAME")
-PASSWORD = os.getenv("PASSWORD")
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-
-# 必需变量检查
-missing = []
-if not WEBSITE_URL:
-    missing.append("WEBSITE_URL")
-if not USERNAME:
-    missing.append("USERNAME")
-if not PASSWORD:
-    missing.append("PASSWORD")
-if missing:
-    print(f"[!] 缺少必需的环境变量: {', '.join(missing)}")
-    sys.exit(1)
-
-# Telegram 可选
-TELEGRAM_ENABLED = bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
+def is_linux() -> bool:
+    """检测是否为Linux系统"""
+    return platform.system().lower() == "linux"
 
 
-# ========== Telegram 通知 ==========
-def send_telegram_message(message: str) -> None:
-    """发送 Markdown 格式消息到 Telegram"""
-    if not TELEGRAM_ENABLED:
-        print("[通知]", message)
-        return
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
-        "parse_mode": "Markdown"
-    }
-    try:
-        resp = requests.post(url, json=payload, timeout=10)
-        resp.raise_for_status()
-        print("[+] Telegram 通知发送成功")
-    except Exception as e:
-        print(f"[-] Telegram 通知失败: {e}")
-
-
-# ========== Linux 虚拟显示 ==========
-def setup_linux_display():
-    """为 Linux 无头服务器启动虚拟显示"""
-    if platform.system().lower() != "linux":
-        return None
-    if os.environ.get("DISPLAY"):
-        return None  # 已有显示
-    display = Display(visible=False, size=(1920, 1080))
-    display.start()
-    os.environ["DISPLAY"] = display.new_display_var
-    print("[*] Linux: 已启动虚拟显示 (Xvfb)")
-    return display
-
-
-# ========== 增强的验证检测与点击 ==========
-def detect_and_click_challenge(sb) -> bool:
-    """
-    检测页面上的 Cloudflare 验证元素，并尝试点击通过
-    返回 True 表示至少一次尝试成功（或未检测到验证）
-    """
-    # 常见的验证元素选择器（按优先级）
-    challenge_selectors = [
-        'iframe[src*="challenges"]',
-        'iframe[title*="challenge"]',
-        'iframe[id*="cf"]',
-        '#cf-please-wait',
-        '#turnstile-wrapper',
-        '.cf-turnstile',
-        'div[data-sitekey]',
-        'span[role="checkbox"]',  # Turnstile 复选框
-    ]
-
-    # 等待并检测
-    for selector in challenge_selectors:
+def setup_display():
+    """设置Linux虚拟显示（无头服务器使用）"""
+    if is_linux() and not os.environ.get("DISPLAY"):
         try:
-            if sb.is_element_visible(selector, timeout=3):
-                print(f"[*] 检测到验证元素: {selector}")
-                # 尝试通用点击方法
-                sb.uc_gui_click_captcha()
-                time.sleep(3)
-                # 检查元素是否消失
-                if not sb.is_element_visible(selector, timeout=2):
-                    print("[+] 验证点击成功")
-                    return True
-                else:
-                    print("[!] 通用点击后元素仍存在，尝试备用点击")
-                    # 备用：直接点击复选框区域
-                    sb.uc_click("span[role='checkbox']", timeout=3)
-                    time.sleep(2)
-                    if not sb.is_element_visible(selector, timeout=2):
-                        print("[+] 备用点击成功")
-                        return True
+            from pyvirtualdisplay import Display
+            display = Display(visible=False, size=(1920, 1080))
+            display.start()
+            os.environ["DISPLAY"] = display.new_display_var
+            print("[*] Linux: 已启动虚拟显示 (Xvfb)")
+            return display
+        except ImportError:
+            print("[!] 请安装: pip install pyvirtualdisplay")
+            print("[!] 以及: apt-get install -y xvfb")
+            sys.exit(1)
         except Exception as e:
-            print(f"[!] 处理 {selector} 时异常: {e}")
-            continue
+            print(f"[!] 启动虚拟显示失败: {e}")
+            sys.exit(1)
+    return None
 
-    # 如果以上都未成功，尝试高级自动处理
+
+def login_lunes(
+    email: str,
+    password: str,
+    login_url: str = "https://example.com/login",  # 替换为实际登录页URL
+    proxy: Optional[str] = None,
+    timeout: float = 60.0,
+    save_cookies: bool = True
+) -> Dict[str, Any]:
+    """
+    登录 Lunes Host，自动绕过 Cloudflare Turnstile
+    
+    参数:
+        email: 登录邮箱
+        password: 登录密码
+        login_url: 登录页面URL
+        proxy: 代理地址（可选，格式: http://host:port）
+        timeout: 超时时间（秒）
+        save_cookies: 是否保存登录后的Cookie到文件
+    
+    返回:
+        {
+            "success": bool,
+            "cookies": dict,
+            "cf_clearance": str,
+            "user_agent": str,
+            "error": str
+        }
+    """
+    result = {
+        "success": False,
+        "cookies": {},
+        "cf_clearance": None,
+        "user_agent": None,
+        "error": None
+    }
+
     try:
-        print("[*] 尝试高级自动处理 (uc_gui_handle_captcha)")
-        sb.uc_gui_handle_captcha()
-        time.sleep(3)
-        return True
-    except:
-        pass
+        print(f"[*] 登录目标: {login_url}")
+        if proxy:
+            print(f"[*] 代理: {proxy}")
 
-    print("[*] 未检测到需要点击的验证元素，继续流程")
-    return False  # 没有检测到或无法处理
+        # 启动浏览器（UC模式自动处理 Cloudflare 验证）
+        with SB(uc=True, test=True, locale="en", proxy=proxy) as sb:
+            print("[*] 浏览器已启动，正在加载登录页面...")
 
+            # 打开页面（带重连机制，提高稳定性）
+            sb.uc_open_with_reconnect(login_url, reconnect_time=5.0)
+            time.sleep(2)
 
-# ========== 主流程：绕过 + 登录 ==========
-def bypass_and_login():
-    """执行 Cloudflare 绕过和登录"""
-    display = setup_linux_display()
+            # 检测并尝试绕过 Cloudflare 验证（如果有）
+            page_source = sb.get_page_source().lower()
+            if "turnstile" in page_source or "challenges.cloudflare" in page_source:
+                print("[*] 检测到 Cloudflare 验证，正在尝试自动处理...")
+                try:
+                    sb.uc_gui_click_captcha()  # 点击验证复选框（如果出现）
+                    time.sleep(3)
+                except Exception as e:
+                    print(f"[!] 点击验证码出错: {e}")
 
-    try:
-        # 启动浏览器（UC 模式）
-        with SB(uc=True, test=True, locale="en") as sb:
-            print("[*] 浏览器已启动，正在访问登录页...")
-            sb.uc_open_with_reconnect(WEBSITE_URL, reconnect_time=5.0)
-            time.sleep(3)  # 等待页面初步加载
+            # 等待 Turnstile 自动填充隐藏字段（通常很快）
+            print("[*] 等待 Turnstile 完成验证...")
+            sb.wait_for_element_present("input[name='cf-turnstile-response']", timeout=15)
+            sb.wait_for_attribute("input[name='cf-turnstile-response']", "value", "", timeout=15)
 
-            # 检测并处理验证
-            detect_and_click_challenge(sb)
+            # 定位邮箱、密码输入框
+            email_input = sb.find_element("input#email")
+            pwd_input = sb.find_element("input#password")
 
-            # 填写登录表单（请根据实际页面修改选择器）
-            print("[*] 等待登录表单加载...")
-            sb.wait_for_element_visible("#email", timeout=10)
-            sb.type("#email", USERNAME)
-            sb.type("#password", PASSWORD)
-            sb.click("button[type='submit']")
+            # 填写表单
+            email_input.clear()
+            email_input.send_keys(email)
+            pwd_input.clear()
+            pwd_input.send_keys(password)
 
-            # 等待登录结果（例如用户名输入框消失，或出现欢迎信息）
-            sb.wait_for_element_not_present("#email", timeout=15)
-            time.sleep(2)  # 额外等待页面稳定
+            # 点击提交按钮
+            submit_btn = sb.find_element("button[type='submit']")
+            submit_btn.click()
+            print("[*] 登录表单已提交，等待跳转...")
 
-            # 检查登录是否成功
-            current_url = sb.get_current_url()
-            title = sb.get_title()
-            if "login" not in title.lower() and "signin" not in title.lower():
-                msg = (f"*登录成功！*\n"
-                       f"时间: {datetime.now().isoformat()}\n"
-                       f"页面: {current_url}\n"
-                       f"标题: {title}")
-                send_telegram_message(msg)
-                print("[+] 登录成功")
+            # 等待登录成功后的页面特征（可调整）
+            time.sleep(5)
+            sb.wait_for_url_change(login_url, timeout=10)
+
+            # 获取所有Cookie
+            cookies_list = sb.get_cookies()
+            result["cookies"] = {c["name"]: c["value"] for c in cookies_list}
+            result["cf_clearance"] = result["cookies"].get("cf_clearance")
+            result["user_agent"] = sb.execute_script("return navigator.userAgent")
+
+            # 判断是否登录成功（根据实际情况修改）
+            if "dashboard" in sb.get_current_url() or len(result["cookies"]) > 2:
+                result["success"] = True
+                print(f"[+] 登录成功！当前URL: {sb.get_current_url()}")
+
+                # 保存Cookie
+                if save_cookies:
+                    save_dir = Path("output/cookies")
+                    save_dir.mkdir(parents=True, exist_ok=True)
+                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+                    # JSON格式
+                    with open(save_dir / f"lunes_cookies_{ts}.json", "w", encoding="utf-8") as f:
+                        json.dump({
+                            "url": login_url,
+                            "cookies": result["cookies"],
+                            "user_agent": result["user_agent"],
+                            "timestamp": ts
+                        }, f, indent=2, ensure_ascii=False)
+
+                    # Netscape格式（可用于curl/wget）
+                    with open(save_dir / f"lunes_cookies_{ts}.txt", "w") as f:
+                        f.write("# Netscape HTTP Cookie File\n")
+                        for c in cookies_list:
+                            domain = c.get("domain", "")
+                            secure = "TRUE" if c.get("secure") else "FALSE"
+                            expiry = int(c.get("expiry", 0))
+                            f.write(f"{domain}\tTRUE\t{c.get('path', '/')}\t{secure}\t{expiry}\t{c['name']}\t{c['value']}\n")
+
+                    print(f"[+] Cookie已保存到: {save_dir}")
             else:
-                raise Exception("登录失败，页面仍处于登录状态")
+                result["error"] = "登录失败，未跳转到预期页面"
+                print(f"[-] {result['error']}")
 
     except Exception as e:
-        # 失败截图
-        try:
-            sb.save_screenshot("login-failure.png")
-            print("[*] 已保存截图: login-failure.png")
-        except:
-            pass
+        result["error"] = str(e)
+        print(f"[-] 发生异常: {e}")
 
-        error_msg = (f"*登录失败！*\n"
-                     f"时间: {datetime.now().isoformat()}\n"
-                     f"错误: {str(e)}")
-        send_telegram_message(error_msg)
-        print(f"[-] 登录异常: {e}")
-        raise
-
-    finally:
-        if display:
-            display.stop()
+    return result
 
 
-# ========== 程序入口 ==========
+# ============================================================
+# 命令行入口
+# ============================================================
 if __name__ == "__main__":
-    bypass_and_login()
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Lunes Host 自动登录（绕过 Cloudflare Turnstile）",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例:
+  python lunes_login.py user@example.com yourpassword
+  python lunes_login.py user@example.com yourpassword --proxy http://127.0.0.1:7890
+        """
+    )
+    parser.add_argument("email", help="登录邮箱")
+    parser.add_argument("password", help="登录密码")
+    parser.add_argument("--url", default="https://example.com/login", help="登录页URL（默认为示例）")
+    parser.add_argument("-p", "--proxy", help="代理地址（如 http://127.0.0.1:7890）")
+    parser.add_argument("-t", "--timeout", type=float, default=60.0, help="超时时间")
+    parser.add_argument("--no-save", action="store_true", help="不保存Cookie")
+    args = parser.parse_args()
+
+    # Linux虚拟显示（无头服务器必需）
+    display = setup_display()
+
+    print("\n" + "="*50)
+    print("Lunes Host 自动登录脚本")
+    print(f"系统: {platform.system()} {platform.release()}")
+    print("="*50 + "\n")
+
+    # 执行登录
+    result = login_lunes(
+        email=args.email,
+        password=args.password,
+        login_url=args.url,
+        proxy=args.proxy,
+        timeout=args.timeout,
+        save_cookies=not args.no_save
+    )
+
+    # 输出结果摘要
+    print("\n" + "-"*50)
+    if result["success"]:
+        print(f"[✓] 登录成功！获取到 {len(result['cookies'])} 个 Cookie")
+        if result.get("cf_clearance"):
+            print(f"[✓] cf_clearance: {result['cf_clearance'][:50]}...")
+    else:
+        print(f"[✗] 登录失败: {result['error']}")
+    print("-"*50 + "\n")
+
+    # 清理虚拟显示
+    if display:
+        display.stop()
